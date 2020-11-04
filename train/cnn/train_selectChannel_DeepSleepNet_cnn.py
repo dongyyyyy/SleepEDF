@@ -187,6 +187,7 @@ def train_selectChannel_DeepSleepNet_cnn(train_signals_path,val_signals_path,tra
                 torch.cuda.empty_cache()
                 batch_size += 1
                 count = 0
+
         val_total_loss /= batch_size
         val_accuracy = val_total_count / val_total_data * 100
 
@@ -250,23 +251,27 @@ def training_info(k_fold=5):
     optim = 'Adam'
     loss_function = 'CE'
     preprocessing = True
+    dataset_list = os.listdir(train_signals_path)
     norm_methods = 'Standard'
-    for k_num in range(k_fold):
+    for k_num in range(0,k_fold):
         logging_file = logging_path + 'DeepSleepNet_SleepEDF_%d_%d_flod.txt'%(k_fold,k_num)
         save_file = save_path + 'DeepSleepNet_SleepEDF_%d_%d_fold.pth'%(k_fold,k_num)
 
-        dataset_list = os.listdir(train_signals_path)
         train_list = []
         val_list = []
         for index, filename in enumerate(dataset_list):
-            if k_num+index % k_fold == 0:
+            print((index+k_num)%k_fold)
+            if (k_num+index) % k_fold == 0:
                 val_list.append(filename)
             else:
                 train_list.append(filename)
 
         print('%d fold train len : %d / val len : %d'%(k_num,len(train_list),len(val_list)))
         select_channel = [0]
-
+        print('trainset ')
+        print(train_list)
+        print('valset')
+        print(val_list)
         train_selectChannel_DeepSleepNet_cnn(train_signals_path=train_signals_path,val_signals_path=train_signals_path,train_list=train_list,val_list=val_list,annotations_path=annotations_path,
                                              save_file=save_file,logging_file=logging_file,select_channel=select_channel,epochs=epochs,learning_rate=learning_rate,optim=optim,loss_function=loss_function,preprocessing=preprocessing,
                                              norm_methods=norm_methods)
