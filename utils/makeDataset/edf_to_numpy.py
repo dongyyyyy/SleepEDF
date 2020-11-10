@@ -45,7 +45,7 @@ def search_correct_signals_npy(dirname, filename):
     return filename
 
 def make_dataset_edf_to_numpy():
-    path = 'D:/dataset/sleep-edf-database-expanded-1.0.0/sleep-cassette/' # sleep-edf 2013 데이터를 가지고 있는 폴더 명
+    path = 'H:/sleep-edf-database-expanded-1.0.0/sleep-cassette/' # sleep-edf 2013 데이터를 가지고 있는 폴더 명
     annotations_edf_list = search_annotations_edf(path)
     signals_edf_list = search_signals_edf(path)
 
@@ -70,7 +70,7 @@ def make_dataset_edf_to_numpy():
 
     save_path = 'C:/dataset/SleepEDF/'
 
-    save_signals_path = save_path + 'origin_npy/'
+    save_signals_path = save_path + 'origin_npy/3channel/'
     save_annotations_path = save_path + 'annotations/'
 
     os.makedirs(save_annotations_path, exist_ok=True)
@@ -316,10 +316,10 @@ def check_train_testset():
         break
 
 
-
-#make_dataset_edf_to_numpy()
-#make_dataset_3channel()
-#check_dataset_truth()
-#remove_wake()
+#
+# make_dataset_edf_to_numpy()
+# make_dataset_3channel()
+# check_dataset_truth()
+# remove_wake()
 # make_train_testset()
-check_train_testset()
+# check_train_testset()

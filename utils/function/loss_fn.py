@@ -1,44 +1,54 @@
 from include.header import *
+from utils.function.function import *
+def make_weights_for_balanced_classes(annotations_path, file_list,nclasses=5):
+    count = np.zeros((6))
+
+    for filename in file_list:
+        annotations = np.load(annotations_path+search_correct_annotations_npy(annotations_path,filename))
+        count += np.bincount(annotations,minlength=nclasses)
+
+    weight_per_class = [0.] * nclasses
+    N = float(sum(count))
+    for i in range(nclasses):
+        weight_per_class[i] = N/float(count[i])
+
+    return weight_per_class , count
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=0, size_average=True):
+    def __init__(self, gamma=2, size_average=True,weights=None,no_of_classes=5):
         super(FocalLoss, self).__init__()
         self.gamma = gamma
-
+        self.no_of_classes =no_of_classes
+        self.weights = weights
     def forward(self, input, target):
         if input.dim() > 2:
             input = input.view(input.size(0), input.size(1), -1)  # N,C,H,W => N,C,H*W
             input = input.transpose(1, 2)  # N,C,H*W => N,H*W,C
             input = input.contiguous().view(-1, input.size(2))  # N,H*W,C => N*H*W,C
+        if self.weights != None:
+            labels_one_hot = F.one_hot(target, self.no_of_classes).float() # one-hot Encoding
+            weights = self.weights.unsqueeze(0)# (5) -> (1,5) [1,1,1,1,1]->[[1,1,1,1,]]
+            weights = weights.repeat(labels_one_hot.shape[0],1) * labels_one_hot # label에 해당하는 위치의 weight값
+            weights = weights.sum(1)
+            weights = weights.unsqueeze(1)
+            weights = weights.repeat(1,self.no_of_classes) # 정답 class의 weight로 해당 batch의 모든 class weight 일치시킴
+            #print(weights)
+        else:
+            weights = 1
+
         target = target.view(-1, 1)
+        if self.weights != None:
+            weights = weights.gather(1, target)
 
         logpt = F.log_softmax(input)
+
         logpt = logpt.gather(1, target)
         logpt = logpt.view(-1)
         pt = Variable(logpt.data.exp())
-
-        loss = -1 * (1 - pt) ** self.gamma * logpt
+        loss = weights * -1 * (1 - pt) ** self.gamma * logpt
         return loss.mean()
 
-class ImblanceCrossEntropy(nn.Module):
-    def __init__(self, prob=[0.77,0.99,0.55,0.99,0.77]):
-        super(FocalLoss, self).__init__()
-        self.prob = np.array(prob)
 
-    def forward(self, input, target):
-        if input.dim() > 2:
-            input = input.view(input.size(0), input.size(1), -1)  # N,C,H,W => N,C,H*W
-            input = input.transpose(1, 2)  # N,C,H*W => N,H*W,C
-            input = input.contiguous().view(-1, input.size(2))  # N,H*W,C => N*H*W,C
-        target = target.view(-1, 1)
-
-        logpt = F.log_softmax(input)
-        logpt = logpt.gather(1, target)
-        logpt = self.prob * logpt
-        logpt = logpt.view(-1)
-
-        loss = -1 * logpt
-        return loss.mean()
 
 class MeanFalseError_loss(nn.Module):
     def __init__(self):
@@ -129,37 +139,30 @@ class CB_loss(nn.Module):
         self.beta = beta
         self.gamma = gamma
 
-        self.effective_num = 1.0 - np.power(self.beta, self.samples_per_cls)
-        #print(effective_num)
+        no_of_classes = 6
+        if no_of_classes == 6:
+            self.effective_num = 1.0 - np.power(beta, samples_per_cls[:5])
+        else:
+            self.effective_num = 1.0 - np.power(self.beta, self.samples_per_cls)
+        print(self.effective_num)
         self.weights = (1.0 - self.beta) / np.array(self.effective_num)
-        #print(weights)
-        self.weights = self.weights / np.sum(self.weights) * self.no_of_classes
-        self.weights = torch.tensor(self.weights).float()
 
+        self.weights = np.append(self.weights,0.)
+        print(self.weights)
+        self.weights = self.weights / np.sum(self.weights) * self.no_of_classes
+
+        self.weights = torch.tensor(self.weights).float()
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         self.weights = self.weights.to(device)
 
     def forward(self,logits,labels):
-
-        #print(weights)
-        #print(weights.shape)
         labels_one_hot = F.one_hot(labels, self.no_of_classes).float() # one-hot Encoding
-
-        #print('weight to Float',weights)
         weights = self.weights.unsqueeze(0)# (5) -> (1,5) [1,1,1,1,1]->[[1,1,1,1,]]
-        #print('weight unqueeze ',weights)
-        #print('weight repeat without dot',weights.repeat(labels_one_hot.shape[0],1))
         weights = weights.repeat(labels_one_hot.shape[0],1) * labels_one_hot # label에 해당하는 위치의 weight값
-        #
-        #print('weights repeat ',weights)
         weights = weights.sum(1)
-
-        #print('weight sum',weights)
         weights = weights.unsqueeze(1)
-        #print('weight un squeeze',weights)
         weights = weights.repeat(1,self.no_of_classes) # 정답 class의 weight로 해당 batch의 모든 class weight 일치시킴
-        #print('weight repeat',weights)
 
         if self.loss_type == "focal":
             cb_loss = CB_focal_loss(labels_one_hot, logits, weights, self.gamma)

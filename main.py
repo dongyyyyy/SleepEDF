@@ -1,6 +1,6 @@
 from include.header import *
 from utils.function.function import *
-
+from utils.function.loss_fn import *
 
 
 if __name__ == '__main__':
@@ -15,6 +15,9 @@ if __name__ == '__main__':
     if args.mode == 'train':
         print('Train Mode')
     if args.mode == 'Something':
+        test()
         print('Something!!')
+
+
 
 

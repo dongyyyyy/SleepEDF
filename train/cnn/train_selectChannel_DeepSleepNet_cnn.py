@@ -24,6 +24,9 @@ def train_selectChannel_DeepSleepNet_cnn(train_signals_path,val_signals_path,tra
     print('Train dataset len : ',train_dataset_len)
     print('Validation dataset len : ',val_dataset_len)
 
+    _, count = make_weights_for_balanced_classes(annotations_path, train_list, nclasses=6)
+    print('label count : ',count)
+
     model = DeepSleepNet_classification(in_channel=len(select_channel),class_num=6)
 
     model.apply(weights_init) # model weight init
@@ -42,9 +45,45 @@ def train_selectChannel_DeepSleepNet_cnn(train_signals_path,val_signals_path,tra
         print('One GPU Process!!!')
 
     if loss_function == 'CE':
-        loss_fn = nn.CrossEntropyLoss()
+        loss_fn = nn.CrossEntropyLoss().to(device)
+    elif loss_function == 'CEW':
+        samples_per_cls = count / np.sum(count)
+        no_of_classes = 6
+        if no_of_classes == 6:
+            effective_num = 1.0 - np.power(beta, samples_per_cls[:5])
+            weights = (1.0 - beta) / np.array(effective_num)
+            weights = np.append(weights, 0.)
+        else:
+            effective_num = 1.0 - np.power(beta, samples_per_cls)
+            weights = (1.0 - beta) / np.array(effective_num)
+
+        weights = weights / np.sum(weights) * no_of_classes
+
+
+        weights = torch.tensor(weights).float()
+        weights = weights.to(device)
+        print('wegiths : ',weights)
+        loss_fn = nn.CrossEntropyLoss(weight=weights).to(device)
     elif loss_function == 'FL':
-        loss_fn = FocalLoss(gamma=2)
+        loss_fn = FocalLoss(gamma=2).to(device)
+    elif loss_function == 'CBL':
+        samples_per_cls = count / np.sum(count)
+        no_of_classes = 6
+        if no_of_classes == 6:
+            effective_num = 1.0 - np.power(beta, samples_per_cls[:5])
+            weights = (1.0 - beta) / np.array(effective_num)
+            weights = np.append(weights, 0.)
+        else:
+            effective_num = 1.0 - np.power(beta, samples_per_cls)
+            weights = (1.0 - beta) / np.array(effective_num)
+
+        weights = weights / np.sum(weights) * no_of_classes
+
+        weights = torch.tensor(weights).float()
+        weights = weights.to(device)
+        print('weights : ',weights)
+        loss_fn = FocalLoss(gamma=2,weights=weights,no_of_classes=no_of_classes).to(device)
+
 
     if cuda:
         loss_fn = loss_fn.to(device)
@@ -59,8 +98,13 @@ def train_selectChannel_DeepSleepNet_cnn(train_signals_path,val_signals_path,tra
         print('Optimizer : SGD')
         optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
 
-    minibatch_size = 20
+    minibatch_size = 5
     norm_square = 2
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, mode='min', factor=.5, patience=10,
+                                                           min_lr=1e-6)
+    cut_value = 192e-6
+    if norm_methods =='OneToOne' or norm_methods =='MinMax':
+        cut_value = torch.tensor(cut_value, dtype=torch.float)
 
     for epoch in range(epochs):
         train_dataset = suffle_dataset_list(train_list)
@@ -87,10 +131,10 @@ def train_selectChannel_DeepSleepNet_cnn(train_signals_path,val_signals_path,tra
 
             if index % minibatch_size == 0:
                 batch_signals, batch_labels = get_dataset_selectChannel(signals_path=train_signals_path,annotations_path=annotations_path,filename=filename,select_channel=select_channel,preprocessing=preprocessing,
-                                                                  norm_methods=norm_methods)
+                                                                  norm_methods=norm_methods,cut_value=cut_value)
             else:
                 new_signals, new_labels = get_dataset_selectChannel(signals_path=train_signals_path,annotations_path=annotations_path,filename=filename,select_channel=select_channel,preprocessing=preprocessing,
-                                                                  norm_methods=norm_methods)
+                                                                  norm_methods=norm_methods,cut_value=cut_value)
 
                 batch_signals = torch.cat((batch_signals, new_signals), dim=1)
                 batch_labels = torch.cat((batch_labels, new_labels))
@@ -111,7 +155,6 @@ def train_selectChannel_DeepSleepNet_cnn(train_signals_path,val_signals_path,tra
                         norm += torch.norm(model.state_dict()[param], p=norm_square)
 
                 loss = loss_fn(pred, batch_labels) + beta * norm
-
                 # print('loss : ',loss.item())
                 # loss = loss_fn(pred, batch_label)
                 # acc
@@ -153,10 +196,10 @@ def train_selectChannel_DeepSleepNet_cnn(train_signals_path,val_signals_path,tra
         for index,filename in enumerate(val_list):
             if index % minibatch_size == 0:
                 batch_signals, batch_labels = get_dataset_selectChannel(signals_path=val_signals_path,annotations_path=annotations_path,filename=filename,select_channel=select_channel,preprocessing=preprocessing,
-                                                                  norm_methods=norm_methods)
+                                                                  norm_methods=norm_methods,cut_value=cut_value)
             else:
                 new_signals, new_labels = get_dataset_selectChannel(signals_path=val_signals_path,annotations_path=annotations_path,filename=filename,select_channel=select_channel,preprocessing=preprocessing,
-                                                                  norm_methods=norm_methods)
+                                                                  norm_methods=norm_methods,cut_value=cut_value)
                 batch_signals = torch.cat((batch_signals, new_signals), dim=1)
                 batch_labels = torch.cat((batch_labels, new_labels))
             count += 1
@@ -197,7 +240,7 @@ def train_selectChannel_DeepSleepNet_cnn(train_signals_path,val_signals_path,tra
         sys.stdout.write(output_str)
         check_file.write(output_str)
 
-        #scheduler.step(float(val_total_loss))
+        scheduler.step(float(val_total_loss))
         # scheduler.step()
 
         if epoch == 0:
@@ -240,40 +283,45 @@ def training_info(k_fold=5):
 
     annotations_path = 'C:/dataset/SleepEDF/annotations/remove_wake/'
 
-    save_path = 'C:/Users/dongyoung/Desktop/Git/SleepEDF/model_saved/'
-    logging_path = 'C:/Users/dongyoung/Desktop/Git/SleepEDF/log/'
+    save_path = 'C:/Users/dongyoung/Desktop/Git/SleepEDF/model_saved/tuning/loss_fn/'
+    logging_path = 'C:/Users/dongyoung/Desktop/Git/SleepEDF/log/tuning/loss_fn/'
 
     os.makedirs(save_path,exist_ok=True)
     os.makedirs(logging_path,exist_ok=True)
     epochs = 2000
-    learning_rate = 0.0001
-    print('learning_rate : %d'%learning_rate)
-    optim = 'Adam'
-    loss_function = 'CE'
+    learning_rate_list = [0.001]
+
+    optim_list = ['RMS','Adam']
+    loss_function_list = ['CE']
     preprocessing = True
     dataset_list = os.listdir(train_signals_path)
-    norm_methods = 'Standard'
-    for k_num in range(0,k_fold):
-        logging_file = logging_path + 'DeepSleepNet_SleepEDF_%d_%d_flod.txt'%(k_fold,k_num)
-        save_file = save_path + 'DeepSleepNet_SleepEDF_%d_%d_fold.pth'%(k_fold,k_num)
+    norm_methods_list = ['Standard']
+    #for k_num in range(0, k_fold):
+    for k_num in range(0,1):
+        for learning_rate in learning_rate_list:
+            for optim in optim_list:
+                for norm_methods in norm_methods_list:
+                    for loss_function in loss_function_list:
+                        print('learning_rate : %d' % learning_rate)
+                        logging_file = logging_path + 'DeepSleepNet_SleepEDF_%.4f_%d_%d_flod_%s_%s_%s_twoChannel.txt'%(learning_rate,k_fold,k_num,optim,norm_methods,loss_function)
+                        save_file = save_path + 'DeepSleepNet_SleepEDF_%.4f_%d_%d_flod_%s_%s_%s_twoChannel.pth'%(learning_rate,k_fold,k_num,optim,norm_methods,loss_function)
 
-        train_list = []
-        val_list = []
-        for index, filename in enumerate(dataset_list):
-            print((index+k_num)%k_fold)
-            if (k_num+index) % k_fold == 0:
-                val_list.append(filename)
-            else:
-                train_list.append(filename)
+                        train_list = []
+                        val_list = []
+                        for index, filename in enumerate(dataset_list):
+                            if (k_num+index) % k_fold == 0:
+                                val_list.append(filename)
+                            else:
+                                train_list.append(filename)
 
-        print('%d fold train len : %d / val len : %d'%(k_num,len(train_list),len(val_list)))
-        select_channel = [0]
-        print('trainset ')
-        print(train_list)
-        print('valset')
-        print(val_list)
-        train_selectChannel_DeepSleepNet_cnn(train_signals_path=train_signals_path,val_signals_path=train_signals_path,train_list=train_list,val_list=val_list,annotations_path=annotations_path,
-                                             save_file=save_file,logging_file=logging_file,select_channel=select_channel,epochs=epochs,learning_rate=learning_rate,optim=optim,loss_function=loss_function,preprocessing=preprocessing,
-                                             norm_methods=norm_methods)
+                        print('%d fold train len : %d / val len : %d_'%(k_num,len(train_list),len(val_list)))
+                        select_channel = [0,1]
+                        print('trainset ')
+                        print(train_list)
+                        print('valset')
+                        print(val_list)
+                        train_selectChannel_DeepSleepNet_cnn(train_signals_path=train_signals_path,val_signals_path=train_signals_path,train_list=train_list,val_list=val_list,annotations_path=annotations_path,
+                                                             save_file=save_file,logging_file=logging_file,select_channel=select_channel,epochs=epochs,learning_rate=learning_rate,optim=optim,loss_function=loss_function,preprocessing=preprocessing,
+                                                             norm_methods=norm_methods)
 
 training_info(k_fold=5)
